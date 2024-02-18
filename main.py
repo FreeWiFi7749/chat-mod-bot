@@ -7,6 +7,7 @@ import pytz
 from datetime import datetime
 import json
 import glob
+import random
 
 load_dotenv()
 
@@ -27,6 +28,8 @@ async def on_ready():
     print(f"BotID: {client.user.id}")
     print('------')
     await tree.sync()
+    asyncio.create_task(join_random_vc())
+    print("task start")
     await client.change_presence(activity= discord.Activity(name="起動中です…",type=discord.ActivityType.playing))
     await asyncio.sleep(60)
     while True:
@@ -35,7 +38,29 @@ async def on_ready():
      await client.change_presence(activity = discord.Activity(name="チャットを管理中", type=discord.ActivityType.watching))
      await asyncio.sleep(30)
 
-BASE_PATH_DELETED = 'deleted_messages' 
+
+async def join_random_vc():
+    voice_channels = []
+    for guild in client.guilds:
+        for channel in guild.voice_channels:
+            if len(channel.members) > 0:
+                voice_channels.append(channel)
+    
+    if voice_channels:
+        selected_channel = random.choice(voice_channels)
+        voice_client = await selected_channel.connect()
+        source = discord.FFmpegPCMAudio('/home/freewifi110/chat_mod_bot/bym20240217_223910.wav')
+        voice_client.play(source, after=lambda e: print('再生が終了しました。' if e is None else f'再生中にエラーが発生しました: {e}'))
+        await asyncio.sleep(30)
+        await voice_client.disconnect()
+    else:
+        print("ユーザーがいるボイスチャンネルがありません。")
+    
+    await asyncio.sleep(800)
+    asyncio.create_task(join_random_vc())
+
+
+BASE_PATH_DELETED = 'deleted_messages'
 BASE_PATH_EDITED = 'edited_messages'
 
 # このヘルパー関数は指定されたユーザーIDの全ての日付を返す
@@ -212,7 +237,7 @@ async def analyze_text_for_personal_info(text):
     response = await loop.run_in_executor(
         None, 
         lambda: openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-4-turbo-preview",
             messages=[
                 {
                     "role": "system",
@@ -243,7 +268,7 @@ async def analyze_text_for_sensitive_info(text):
     response = await loop.run_in_executor(
         None, 
         lambda: openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-4-turbo-preview",
             messages=[
                 {
                     "role": "system",
@@ -270,7 +295,7 @@ async def analyze_text_for_inappropriate_content(text):
     response = await loop.run_in_executor(
         None, 
         lambda: openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-4-turbo-preview",
             messages=[
                 {
                     "role": "system",
@@ -305,6 +330,18 @@ async def send_deletion_notice_to_dm(user, message_content, reason):
     except Exception as e:
         print(f"DMの送信に失敗しました: {e}")
 
+async def send_edit_notice_to_dm(user, before_content, after_content, reason):
+    embed = discord.Embed(title="編集されたメッセージの通知", color=discord.Color.gold())
+    embed.add_field(name="編集前のメッセージ", value=before_content, inline=False)
+    embed.add_field(name="編集後のメッセージ", value=after_content, inline=False)
+    embed.add_field(name="理由", value=reason, inline=False)
+    
+    try:
+        await user.send(embed=embed)
+        print("送信者のDMに編集通知を送信しました。")
+    except Exception as e:
+        print(f"DMの送信に失敗しました: {e}")
+        
 @client.event
 async def on_message(message):
     if message.author.bot:
@@ -420,7 +457,8 @@ async def on_message_edit(before, after):
                 await log_channel.send(embed=embed)
                 print("ログチャンネルに編集されたメッセージの情報を送信しました。")
             
-            await send_deletion_notice_to_dm(after.author, before.content, reason)
+            await send_edit_notice_to_dm(after.author, before.content, after.content, reason)
+
 
         except discord.Forbidden:
             print("メッセージの削除またはログの送信に必要な権限がありません。")
