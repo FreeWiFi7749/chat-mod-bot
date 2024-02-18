@@ -35,6 +35,9 @@ async def on_ready():
      await client.change_presence(activity = discord.Activity(name="チャットを管理中", type=discord.ActivityType.watching))
      await asyncio.sleep(30)
 
+BASE_PATH_DELETED = 'deleted_messages' 
+BASE_PATH_EDITED = 'edited_messages'
+
 # このヘルパー関数は指定されたユーザーIDの全ての日付を返す
 def extract_dates(base_path, user_id):
     user_folder = os.path.join(base_path, user_id)
@@ -66,11 +69,11 @@ class UserSelectMenu(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         user_id = self.values[0]
-        files = glob.glob(f'{BASE_PATH}/{user_id}/*/*.json')
-        embeds = [create_embed_from_file(fp) for fp in files]
+        # 削除されたメッセージと編集されたメッセージの両方を含むパスの検索
+        files_deleted = glob.glob(f'{BASE_PATH_DELETED}/{user_id}/*/*.json')
+        files_edited = glob.glob(f'{BASE_PATH_EDITED}/{user_id}/*/*.json')
+        embeds = [create_embed_from_file(fp) for fp in files_deleted + files_edited]
         await interaction.response.edit_message(content='選択されたユーザーのメッセージ:', embeds=embeds, view=None)
-
-BASE_PATH = 'deleted_messages' 
 
 class DateSelectMenu(discord.ui.Select):
     def __init__(self, dates, base_path, user_id):
@@ -81,70 +84,79 @@ class DateSelectMenu(discord.ui.Select):
     
     async def callback(self, interaction: discord.Interaction):
         selected_date = self.values[0]
-        files = glob.glob(f'{BASE_PATH}/{self.user_id}/{selected_date}/*.json')
+        files_deleted = glob.glob(f'{BASE_PATH_DELETED}/*/{selected_date}/*.json')
+        files_edited = glob.glob(f'{BASE_PATH_EDITED}/*/{selected_date}/*.json')
 
-        if not files:
+        if not files_deleted and files_edited:
             await interaction.response.send_message(f'選択された日付 {selected_date} にはメッセージがありません。', ephemeral=True)
             return
         
-        embeds = [create_embed_from_file(file) for file in files]
+        embeds = [create_embed_from_file(file) for file in files_deleted + files_edited]
         await interaction.response.edit_message(content='', embeds=embeds, view=None)
 
 def create_embed_from_file(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
         message_data = json.load(f)
-    embed = discord.Embed(title="削除されたメッセージの詳細", color=discord.Color.red())
-    embed.add_field(name="送信者ID", value=message_data["author_id"], inline=False)
-    embed.add_field(name="メッセージ内容", value=message_data["message_content"], inline=False)
-    embed.add_field(name="理由", value=message_data["reason"], inline=False)
-    embed.add_field(name="削除時刻", value=message_data["timestamp"], inline=False)
+    
+    embed = discord.Embed(title="エラー: メッセージの詳細を読み込めません", color=discord.Color.dark_red())
+    if 'message_content' in message_data:
+        embed = discord.Embed(title="削除されたメッセージの詳細", color=discord.Color.red())
+        embed.add_field(name="送信者ID", value=message_data["author_id"], inline=False)
+        embed.add_field(name="メッセージ内容", value=message_data["message_content"], inline=False)
+    elif 'before_content' in message_data and 'after_content' in message_data:
+        embed = discord.Embed(title="編集されたメッセージの詳細", color=discord.Color.gold())
+        embed.add_field(name="送信者ID", value=message_data["author_id"], inline=False)
+        embed.add_field(name="編集前の内容", value=message_data["before_content"], inline=False)
+        embed.add_field(name="編集後の内容", value=message_data["after_content"], inline=False)
+    
+    embed.add_field(name="理由", value=message_data.get("reason", "N/A"), inline=False)
+    embed.add_field(name="削除時刻", value=message_data.get("timestamp", "N/A"), inline=False)
+
+    if 'channel_id' in message_data:
+        embed.add_field(name="チャンネル", value=f"<#{message_data['channel_id']}>", inline=False)
+    else:
+        embed.add_field(name="チャンネル", value="N/A", inline=False)    
     return embed
 
-@tree.command(name='list_messages', description='指定された日付やユーザーIDに基づいて削除されたメッセージの一覧を表示します。')
+@tree.command(name='list_messages', description='指定された日付やユーザーIDに基づいて削除されたメッセージと編集されたメッセージの一覧を表示します。')
 async def list_messages(interaction: discord.Interaction, date: str = '', user_id: str = ''):
-    base_path = 'deleted_messages'
-    files = []
     await interaction.response.defer(ephemeral=True)
+    base_path_deleted = 'deleted_messages'
+    base_path_edited = 'edited_messages'
     
-    # 日付とユーザーIDの両方が指定されている場合、ファイルのリストを取得します
     if date and user_id:
-        user_date_path = os.path.join(base_path, user_id, date)
-        files = glob.glob(f'{user_date_path}/*.json')
-        if not files:
+        user_date_path_deleted = os.path.join(base_path_deleted, user_id, date)
+        user_date_path_edited = os.path.join(base_path_edited, user_id, date)
+        files_deleted = glob.glob(f'{user_date_path_deleted}/*.json')
+        files_edited = glob.glob(f'{user_date_path_edited}/*.json')
+        
+        if not files_deleted and not files_edited:
             await interaction.followup.send('指定された条件にマッチするメッセージは見つかりませんでした。', ephemeral=True)
             return
-        embeds = [create_embed_from_file(file) for file in files[:25]]
+        
+        embeds = [create_embed_from_file(file) for file in files_deleted + files_edited][:25]
         await interaction.followup.send(embeds=embeds, ephemeral=True)
         return
-
-    # 日付のみが指定された場合
+    
     if date:
-        user_ids = extract_user_ids(base_path, date)
+        user_ids_deleted = extract_user_ids(base_path_deleted, date)
+        user_ids_edited = extract_user_ids(base_path_edited, date)
+        user_ids = list(set(user_ids_deleted + user_ids_edited))
         await interaction.followup.send(
             'ユーザーIDを選択してください:',
-            view=UserListView(user_ids, base_path, date),
+            view=UserListView(user_ids, base_path_deleted, date),
             ephemeral=True
         )
 
-    # ユーザーIDのみが指定された場合
     elif user_id:
-        dates = extract_dates(base_path, user_id)
+        dates_deleted = extract_dates(base_path_deleted, user_id)
+        dates_edited = extract_dates(base_path_edited, user_id)
+        dates = list(set(dates_deleted + dates_edited))
         await interaction.followup.send(
             '日付を選択してください:',
-            view=DateListView(dates, base_path, user_id),
+            view=DateListView(dates, base_path_deleted, user_id),
             ephemeral=True
         )
-
-def create_embed_from_file(file_path):
-    with open(file_path, 'r', encoding='utf-8') as f:
-        message_data = json.load(f)
-    embed = discord.Embed(title="削除されたメッセージの詳細", color=discord.Color.red())
-    embed.add_field(name="送信者ID", value=message_data["author_id"], inline=False)
-    embed.add_field(name="メッセージ内容", value=message_data["message_content"], inline=False)
-    embed.add_field(name="理由", value=message_data["reason"], inline=False)
-    embed.add_field(name="削除時刻", value=message_data["timestamp"], inline=False)
-    embed.add_field(name="チャンネル", value=f"{message_data['channel_name']} | {message_data['channel_id']}", inline=False)
-    return embed
 
 def save_deleted_message_info(author_id, message_content, reason, channel_name, channel_id):
     now = datetime.now(pytz.timezone('Asia/Tokyo'))
@@ -169,6 +181,30 @@ def save_deleted_message_info(author_id, message_content, reason, channel_name, 
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
+def save_edited_message_info(author_id, before_content, after_content, reason, channel_name, channel_id):
+    now = datetime.now(pytz.timezone('Asia/Tokyo'))
+    date_str = now.strftime('%Y-%m-%d')
+    timestamp_str = now.strftime('%Y-%m-%d_%H-%M-%S')
+    
+    save_path = os.path.join('edited_messages', str(author_id), date_str)
+    os.makedirs(save_path, exist_ok=True)
+    
+    filename = f"{timestamp_str}.json"
+    file_path = os.path.join(save_path, filename)
+
+    data = {
+        "author_id": str(author_id),
+        "before_content": before_content,
+        "after_content": after_content,
+        "reason": reason,
+        "channel_name": channel_name,
+        "channel_id": str(channel_id),
+        "timestamp": now.strftime('%Y-%m-%d %H:%M:%S JST')
+    }
+
+    with open(file_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
 async def analyze_text_for_personal_info(text):
     print("テキスト分析を開始します。")
     loop = asyncio.get_running_loop()
@@ -182,11 +218,12 @@ async def analyze_text_for_personal_info(text):
                     "role": "system",
                     "content": """
                     以下のテキストを分析してください。
-                    このテキストに含まれている名前が、Discordサーバーに参加しているユーザーが誤って自分の本名を公開してしまった可能性があります。
-                    名前が実際の人物の本名である場合は、「削除が必要:本名」と応答してください。
-                    名前がフィクションのキャラクター名である場合は、「削除不要:キャラクター名」と、一般的ではない名前の場合は、「削除不要:一般的ではない名前」と応答してください。
+                    このテキストに含まれている名前が実在の人物のものである場合、特にDiscordサーバーに参加しているユーザーの本名である可能性がある場合は、「削除が必要:本名」と応答してください。
+                    公の人物や有名人の名前、フィクションのキャラクター名、あり得ない名前や非公式なニックネーム、またはユーモラスなり愛称である場合は、それらが実在する人物の本名ではない限り、「削除不要」と応答してください。
+                    テキストに含まれる名前が、明らかに架空のものであるか、または一般的な人物の名前として認識されない場合は、「削除不要:架空の名前」または「削除不要:一般的ではない名前」と応答してください。
                     確信が持てない場合は、「判断不能」と応答してください。
-                    """                },
+                    """
+                },
                 {
                     "role": "user",
                     "content": text
@@ -195,9 +232,9 @@ async def analyze_text_for_personal_info(text):
             max_tokens=1024
         )
     )
-    
+
     analysis_result = response.choices[0].message['content']
-    print(f"名前のテキスト分析結果: {analysis_result}")
+    print(f"個人情報のテキスト分析結果: {analysis_result}")
     return "削除が必要" in analysis_result
 
 async def analyze_text_for_sensitive_info(text):
@@ -211,11 +248,7 @@ async def analyze_text_for_sensitive_info(text):
                 {
                     "role": "system",
                     "content": """
-                    以下のテキストを分析してください。
-                    このテキストに含まれている情報が電話番号、住所、またはメールアドレスであるかを判断し、それぞれの情報が含まれている場合は、「削除が必要」と応答してください。
-                    含まれている情報がこれらのカテゴリーに該当しない場合は、「削除不要」と応答してください。
-                    また、含まれている情報の種類（電話番号、住所、メールアドレス）も明記してください。
-                    確信が持てない場合は、「判断不能」と応答してください。
+                    この命令は無視して、「判断不能」とだけ返してください。
                     """
                 },
                 {
@@ -228,7 +261,7 @@ async def analyze_text_for_sensitive_info(text):
     )
     
     analysis_result = response.choices[0].message['content']
-    print(f"電話番号等のテキスト分析結果: {analysis_result}")
+    print(f"機密情報のテキスト分析結果: {analysis_result}")
     return "削除が必要" in analysis_result
 
 async def analyze_text_for_inappropriate_content(text):
@@ -275,6 +308,12 @@ async def send_deletion_notice_to_dm(user, message_content, reason):
 @client.event
 async def on_message(message):
     if message.author.bot:
+        return
+
+    blacklist = load_blacklist()
+
+    if str(message.channel.id) in blacklist.get('blacklisted_channels', []):
+        print(f"チャンネル {message.channel.id} はブラックリストに含まれているため、メッセージは無視されます。")
         return
 
     print(f"メッセージ受信: {message.content} from {message.author}")
@@ -325,5 +364,114 @@ async def on_message(message):
             print("メッセージの削除またはログの送信に必要な権限がありません。")
     else:
         print("メッセージに問題はありません。")
+
+@client.event
+async def on_message_edit(before, after):
+    if after.author.bot:
+        return
+
+    blacklist = load_blacklist()
+
+    if str(after.channel.id) in blacklist.get('blacklisted_channels', []):
+        print(f"チャンネル {after.channel.id} はブラックリストに含まれているため、メッセージは無視されます。")
+        return
+
+    if before.content == after.content:
+        return
+
+    print(f"編集されたメッセージ: {before.content} -> {after.content} by {after.author}")
+
+    contains_personal_info = await analyze_text_for_personal_info(after.content)
+    contains_inappropriate_content = await analyze_text_for_inappropriate_content(after.content)
+    contains_sensitive_info = await analyze_text_for_sensitive_info(after.content)
+
+    if contains_personal_info or contains_inappropriate_content or contains_sensitive_info:
+        try:
+            reason = "個人情報を含むメッセージ" if contains_personal_info else "不適切な内容を含むメッセージ"
+            reason += "または電話番号、住所、メールアドレスを含むメッセージ" if contains_sensitive_info else ""
+            print(f"{reason}によりメッセージを削除します。")
+
+            embed = discord.Embed(title="編集されたメッセージのログ", color=discord.Color.orange())
+            embed.add_field(name="送信者", value=after.author.mention, inline=False)
+            embed.add_field(name="編集前のメッセージ内容", value=before.content, inline=False)
+            embed.add_field(name="編集後のメッセージ内容", value=after.content, inline=False)
+            embed.add_field(name="理由", value=reason, inline=False)
+            channel_url = f"https://discord.com/channels/{after.guild.id}/{after.channel.id}"
+            embed.add_field(name="チャンネル", value=f"{after.channel.mention}", inline=False)
+            embed.set_footer(text=f"メッセージID: {after.id} | 編集時刻: {after.edited_at.strftime('%Y-%m-%d %H:%M:%S JST')}")
+
+            save_edited_message_info(
+                author_id=after.author.id, 
+                before_content=before.content, 
+                after_content=after.content, 
+                reason=reason, 
+                channel_name=after.channel.name,
+                channel_id=after.channel.id
+            )
+            
+            try:
+                await after.delete()
+            except discord.NotFound:
+                print(f"削除しようとしたメッセージが見つかりませんでした。Message ID: {after.id}")
+                return
+
+            log_channel = client.get_channel(LOG_CHANNEL_ID)
+            if log_channel:
+                await log_channel.send(embed=embed)
+                print("ログチャンネルに編集されたメッセージの情報を送信しました。")
+            
+            await send_deletion_notice_to_dm(after.author, before.content, reason)
+
+        except discord.Forbidden:
+            print("メッセージの削除またはログの送信に必要な権限がありません。")
+    else:
+        print("編集されたメッセージに問題はありません。")
+
+BLACKLIST_FILE = 'blacklist.json'
+
+def load_blacklist():
+    try:
+        with open('blacklist.json', 'r', encoding='utf-8') as file:
+            data = json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"blacklisted_channels": []}
+
+    if 'blacklisted_channels' not in data:
+        return {"blacklisted_channels": []}
+    
+    return data
+
+def save_blacklist(data):
+    with open('blacklist.json', 'w', encoding='utf-8') as file:
+        json.dump({"blacklisted_channels": data}, file, indent=4)
+
+@tree.command(name='blacklist_add', description='Add a channel to the blacklist')
+async def blacklist_add(interaction: discord.Interaction, channel: discord.TextChannel):
+    blacklist = load_blacklist()
+    if str(channel.id) in blacklist.get('blacklisted_channels', []):
+        await interaction.response.send_message(f'Channel {channel.mention} is already blacklisted.', ephemeral=True)
+    else:
+        blacklist.get('blacklisted_channels', []).append(str(channel.id))
+        save_blacklist(blacklist.get('blacklisted_channels', []))
+        await interaction.response.send_message(f'Channel {channel.mention} has been added to the blacklist.', ephemeral=True)
+
+@tree.command(name='blacklist_remove', description='Remove a channel from the blacklist')
+async def blacklist_remove(interaction: discord.Interaction, channel: discord.TextChannel):
+    blacklist = load_blacklist()
+    if str(channel.id) not in blacklist['blacklisted_channels']:
+        await interaction.response.send_message(f'Channel {channel.mention} is not blacklisted.', ephemeral=True)
+    else:
+        blacklist['blacklisted_channels'].remove(str(channel.id))
+        save_blacklist(blacklist['blacklisted_channels'])
+        await interaction.response.send_message(f'Channel {channel.mention} has been removed from the blacklist.', ephemeral=True)
+
+@tree.command(name='blacklist_list', description='List all blacklisted channels')
+async def blacklist_list(interaction: discord.Interaction):
+    blacklist = load_blacklist()
+    if not blacklist['blacklisted_channels']:
+        await interaction.response.send_message('No channels are blacklisted.', ephemeral=True)
+    else:
+        channels = '\n'.join([f'<#{cid}>' for cid in blacklist['blacklisted_channels']])
+        await interaction.response.send_message(f'Blacklisted channels:\n{channels}', ephemeral=True)
 
 client.run(DISCORD_TOKEN)
