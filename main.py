@@ -28,8 +28,6 @@ async def on_ready():
     print(f"BotID: {client.user.id}")
     print('------')
     await tree.sync()
-    asyncio.create_task(join_random_vc())
-    print("task start")
     await client.change_presence(activity= discord.Activity(name="起動中です…",type=discord.ActivityType.playing))
     await asyncio.sleep(60)
     while True:
@@ -37,28 +35,6 @@ async def on_ready():
      await asyncio.sleep(30)
      await client.change_presence(activity = discord.Activity(name="チャットを管理中", type=discord.ActivityType.watching))
      await asyncio.sleep(30)
-
-
-async def join_random_vc():
-    voice_channels = []
-    for guild in client.guilds:
-        for channel in guild.voice_channels:
-            if len(channel.members) > 0:
-                voice_channels.append(channel)
-    
-    if voice_channels:
-        selected_channel = random.choice(voice_channels)
-        voice_client = await selected_channel.connect()
-        source = discord.FFmpegPCMAudio('/home/freewifi110/chat_mod_bot/bym20240217_223910.wav')
-        voice_client.play(source, after=lambda e: print('再生が終了しました。' if e is None else f'再生中にエラーが発生しました: {e}'))
-        await asyncio.sleep(30)
-        await voice_client.disconnect()
-    else:
-        print("ユーザーがいるボイスチャンネルがありません。")
-    
-    await asyncio.sleep(800)
-    asyncio.create_task(join_random_vc())
-
 
 BASE_PATH_DELETED = 'deleted_messages'
 BASE_PATH_EDITED = 'edited_messages'
@@ -83,6 +59,46 @@ class DateListView(discord.ui.View):
     def __init__(self, dates, base_path, user_id):
         super().__init__()
         self.add_item(DateSelectMenu(dates, base_path, user_id))
+
+class MessageSwitchView(discord.ui.View):
+    def __init__(self, deleted_files, edited_files):
+        super().__init__()
+        self.deleted_files = deleted_files
+        self.edited_files = edited_files
+        # メッセージタイプを初期化（削除: 'deleted', 編集: 'edited'）
+        self.message_type = 'deleted'
+        self.current_files = self.deleted_files[:10]  # 最初の10ファイル
+        self.remaining_files = self.deleted_files[10:]  # 残りのファイル
+
+    async def update_message_content(self, interaction):
+        files = self.deleted_files if self.message_type == 'deleted' else self.edited_files
+        self.current_files = files[:10]
+        self.remaining_files = files[10:]
+        embeds = [create_embed_from_file(file) for file in self.current_files]
+        await interaction.edit_original_response(embeds=embeds, view=self)
+
+    @discord.ui.button(label="削除されたメッセージ", style=discord.ButtonStyle.red)
+    async def show_deleted(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.message_type = 'deleted'
+        await self.update_message_content(interaction)
+
+    @discord.ui.button(label="編集されたメッセージ", style=discord.ButtonStyle.green)
+    async def show_edited(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.message_type = 'edited'
+        await self.update_message_content(interaction)
+
+    @discord.ui.button(label="もっと見る", style=discord.ButtonStyle.grey)
+    async def show_more(self, button: discord.ui.Button, interaction: discord.Interaction):
+        # 'もっと見る'をクリックしたときの処理
+        if self.remaining_files:
+            additional_files = self.remaining_files[:10]  # 次の10ファイルを取得
+            self.current_files += additional_files  # 現在のリストに追加
+            self.remaining_files = self.remaining_files[10:]  # 残りのファイルを更新
+            embeds = [create_embed_from_file(file) for file in self.current_files]
+            await interaction.response.edit_message(embeds=embeds, view=self)
+        if not self.remaining_files:
+            # 残りのファイルがない場合は、'もっと見る'ボタンを非表示にする
+            self.remove_item(button)
 
 class UserSelectMenu(discord.ui.Select):
     def __init__(self, user_ids, base_path, date):
@@ -112,12 +128,16 @@ class DateSelectMenu(discord.ui.Select):
         files_deleted = glob.glob(f'{BASE_PATH_DELETED}/*/{selected_date}/*.json')
         files_edited = glob.glob(f'{BASE_PATH_EDITED}/*/{selected_date}/*.json')
 
-        if not files_deleted and files_edited:
+        if not files_deleted and not files_edited:
             await interaction.response.send_message(f'選択された日付 {selected_date} にはメッセージがありません。', ephemeral=True)
             return
-        
-        embeds = [create_embed_from_file(file) for file in files_deleted + files_edited]
-        await interaction.response.edit_message(content='', embeds=embeds, view=None)
+
+        combined_files = files_deleted + files_edited
+        embeds = [create_embed_from_file(file) for file in combined_files][:10]
+        more_files = combined_files[10:]
+
+        # MessageSwitchViewのインスタンス化を修正
+        await interaction.response.edit_message(content='', embeds=embeds, view=MessageSwitchView(files_deleted, files_edited))
 
 def create_embed_from_file(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
@@ -159,10 +179,10 @@ async def list_messages(interaction: discord.Interaction, date: str = '', user_i
             await interaction.followup.send('指定された条件にマッチするメッセージは見つかりませんでした。', ephemeral=True)
             return
         
-        embeds = [create_embed_from_file(file) for file in files_deleted + files_edited][:25]
-        await interaction.followup.send(embeds=embeds, ephemeral=True)
-        return
-    
+        view = MessageSwitchView(files_deleted, files_edited)
+        embeds = [create_embed_from_file(file) for file in files_deleted[:10]]
+        await interaction.followup.send("メッセージのタイプを選択してください:", embeds=embeds, view=view, ephemeral=True)
+              
     if date:
         user_ids_deleted = extract_user_ids(base_path_deleted, date)
         user_ids_edited = extract_user_ids(base_path_edited, date)
@@ -242,11 +262,11 @@ async def analyze_text_for_personal_info(text):
                 {
                     "role": "system",
                     "content": """
-                    以下のテキストを分析してください。
-                    このテキストに含まれている名前が実在の人物のものである場合、特にDiscordサーバーに参加しているユーザーの本名である可能性がある場合は、「削除が必要:本名」と応答してください。
-                    公の人物や有名人の名前、フィクションのキャラクター名、あり得ない名前や非公式なニックネーム、またはユーモラスなり愛称である場合は、それらが実在する人物の本名ではない限り、「削除不要」と応答してください。
-                    テキストに含まれる名前が、明らかに架空のものであるか、または一般的な人物の名前として認識されない場合は、「削除不要:架空の名前」または「削除不要:一般的ではない名前」と応答してください。
-                    確信が持てない場合は、「判断不能」と応答してください。
+                    テキストに含まれている名前を分析して、以下の基準に基づいて判断してください。
+                    名前が実在する人物、特にDiscordサーバーに参加している可能性がある本名であれば「削除が必要:本名」と答えてください。
+                    公の人物や有名人、架空のキャラクター、一般的でない名前、またはユーモラスな愛称であれば、「削除不要」と答えてください。
+                    名前が完全に架空であるか、一般的に人名として認識されない場合は、「削除不要:架空の名前」または「削除不要:一般的ではない名前」と答えてください。
+                    判断が難しい場合は、「判断不能」と答えてください。
                     """
                 },
                 {
@@ -344,8 +364,14 @@ async def send_edit_notice_to_dm(user, before_content, after_content, reason):
         
 @client.event
 async def on_message(message):
+    # ボット自身のメッセージは無視
     if message.author.bot:
         return
+
+    specific_user_id = '707320830387814531'
+
+    if client.user.mentioned_in(message) and str(message.author.id) == specific_user_id:
+        await message.channel.send('はい、分かりました。執行します。')
 
     blacklist = load_blacklist()
 
