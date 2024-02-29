@@ -3,6 +3,7 @@ import asyncio
 from config import DISCORD_TOKEN
 from commands.message_analysis import on_message_analysis
 from utils.utils import setup_openai
+from config import LOG_CHANNEL_ID
 
 intents = discord.Intents.all()
 client = discord.Client(intents=intents)
@@ -27,6 +28,6 @@ async def on_ready():
 
 @client.event
 async def on_message(message):
-    await on_message_analysis(message, client)
+    await on_message_analysis(message, client, LOG_CHANNEL_ID)
 
 client.run(DISCORD_TOKEN)

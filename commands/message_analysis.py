@@ -1,4 +1,26 @@
+import discord
+import pytz
+import json
+from datetime import datetime
 from utils.utils import analyze_text_for_personal_info, analyze_text_for_sensitive_info, analyze_text_for_inappropriate_content, send_deletion_notice_to_dm, save_deleted_message_info
+
+BASE_PATH = 'data/blacklist.json'
+
+def load_blacklist():
+    try:
+        with open('blacklist.json', 'r', encoding='utf-8') as file:
+            data = json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"blacklisted_channels": []}
+
+    if 'blacklisted_channels' not in data:
+        return {"blacklisted_channels": []}
+    
+    return data
+
+def save_blacklist(data):
+    with open('blacklist.json', 'w', encoding='utf-8') as file:
+        json.dump({"blacklisted_channels": data}, file, indent=4)
 
 async def on_message_analysis(message, client, LOG_CHANNEL_ID):
     if message.author.bot:

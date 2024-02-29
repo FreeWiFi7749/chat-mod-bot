@@ -1,8 +1,12 @@
+import discord
 import openai
+import json
+import os
 import asyncio
+import pytz
+from datetime import datetime
 from config import OPENAI_API_KEY
 
-openai.api_key = OPENAI_API_KEY
 BASE_PATH = 'data/deleted_messages'
 
 async def analyze_text_for_personal_info(text):
@@ -94,6 +98,51 @@ async def analyze_text_for_inappropriate_content(text):
     print(f"メッセージの安全性のテキスト分析結果: {analysis_result}")
     return "削除が必要" in analysis_result
 
+async def send_deletion_notice_to_dm(user, message_content, reason):
+    embed = discord.Embed(title="削除されたメッセージの通知", color=discord.Color.orange())
+    embed.add_field(name="消去されたメッセージ", value=message_content, inline=False)
+    embed.add_field(name="理由", value=reason, inline=False)
+    
+    try:
+        await user.send(embed=embed)
+        print("送信者のDMに削除通知を送信しました。")
+    except Exception as e:
+        print(f"DMの送信に失敗しました: {e}")
+
+async def send_edit_notice_to_dm(user, before_content, after_content, reason):
+    embed = discord.Embed(title="編集されたメッセージの通知", color=discord.Color.gold())
+    embed.add_field(name="編集前のメッセージ", value=before_content, inline=False)
+    embed.add_field(name="編集後のメッセージ", value=after_content, inline=False)
+    embed.add_field(name="理由", value=reason, inline=False)
+    
+    try:
+        await user.send(embed=embed)
+        print("送信者のDMに編集通知を送信しました。")
+    except Exception as e:
+        print(f"DMの送信に失敗しました: {e}")
+def save_deleted_message_info(author_id, message_content, reason, channel_name, channel_id):
+    now = datetime.now(pytz.timezone('Asia/Tokyo'))
+    date_str = now.strftime('%Y-%m-%d')
+    timestamp_str = now.strftime('%Y-%m-%d_%H-%M-%S')
+    
+    save_path = os.path.join('deleted_messages', str(author_id), date_str)
+    os.makedirs(save_path, exist_ok=True)
+    
+    filename = f"{timestamp_str}.json"
+    file_path = os.path.join(save_path, filename)
+    
+    data = {
+        "author_id": author_id,
+        "message_content": message_content,
+        "reason": reason,
+        "timestamp": now.strftime('%Y-%m-%d %H:%M:%S JST'),
+        "channel_name": channel_name,
+        "channel_id": channel_id
+    }
+    
+    with open(file_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
 
 def setup_openai():
-    # OpenAIのセットアップに必要な処理をここに配置
+    openai.api_key = OPENAI_API_KEY
