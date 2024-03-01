@@ -46,7 +46,7 @@ async def analyze_text_for_personal_info(text: str) -> (bool, list):
         reasons.extend(process_response(result))
     decision = any("削除が必要" in result for result in results)
 
-    print("個人情報の分析結果:", decision, reasons)    
+    print("個人情報の分析結果:", decision, reasons)
     return decision, reasons
 
 async def analyze_text_for_sensitive_info(text: str) -> (bool, list):

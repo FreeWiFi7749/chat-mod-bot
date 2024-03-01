@@ -20,7 +20,7 @@ def save_blacklist(data):
         json.dump(data, file, indent=4)
 
 async def on_message_analysis(message, client, LOG_CHANNEL_ID):
-    if message.author.bot or str(message.guild.id) in config.EXCLUDED_GUILD_IDS:
+    if message.author.bot: # or str(message.guild.id) in config.EXCLUDED_GUILD_IDS:
         return
 
     blacklist = load_blacklist()
@@ -55,7 +55,11 @@ async def on_message_analysis(message, client, LOG_CHANNEL_ID):
         embed.add_field(name="送信者", value=message.author.mention, inline=False)
         embed.add_field(name="メッセージ内容", value=message.content, inline=False)
         embed.add_field(name="理由", value=reason_text, inline=False)
+<<<<<<< HEAD
         embed.add_field(name="チャンネル", value=message.channel.mention, inline=False)
+=======
+        embed.add_field(name="ch", value=message.channel.mention, inline=False)
+>>>>>>> 8155033 (add readme)
         embed.set_footer(text=f"メッセージID: {message.id} | 送信時刻: {datetime.now(pytz.timezone('Asia/Tokyo')).strftime('%Y-%m-%d %H:%M:%S JST')}")
 
         await send_deletion_notice_to_dm(message.author, message.content, reason_text)

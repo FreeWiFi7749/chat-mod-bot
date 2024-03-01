@@ -19,7 +19,7 @@ async def on_ready():
     await tree.sync()
     await client.change_presence(activity= discord.Activity(name="起動中です…",type=discord.ActivityType.playing))
     setup_openai()
-    await asyncio.sleep(60)
+    await asyncio.sleep(15)
     while True:
      await client.change_presence(activity = discord.Activity(name="Moderating Chat Now", type=discord.ActivityType.watching))
      await asyncio.sleep(30)
